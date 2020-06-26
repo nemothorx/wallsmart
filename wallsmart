@@ -1,0 +1,671 @@
+#!/bin/bash
+
+#set -x	    # very low debug :)
+
+# a smart wallpaper setter for MATE/GNOME2/GNOME3/UNITY desktops (I hope ;)
+#
+
+########################################################## DEFAULT ENVRONMENT
+
+################################# config file defaults
+walldbdir="$HOME/.wallsmart.d/"	    # trailing slash ensures this works even if it's a symlink
+picopt_default="scaled"   # default picture_option setting. 
+DEBUG=""      # any non-zerolength string will activate debug
+# and here is our config file
+[ -r $HOME/.wallsmartrc ] && source $HOME/.wallsmartrc
+
+
+################################ internal defaults
+# VERBOSE=""	# any non-zerolength string will activate verbose
+# smart verbosity - verbose if we have a TERM that is not dumb
+[ -n "$TERM" ] && [ "$TERM" != "dumb" ] && VERBOSE="on"
+picture_options=$picopt_default	    # force this global
+count=0		# a useful counter, initialised here to be global. TODO: more descriptive?
+depth=8		# calculate edge colours at this depth
+
+
+helptext="
+SYNOPSIS
+    wallsmart
+    wallsmart [ string ]
+    wallsmart [ -number ]
+    wallsmart [ -a|-add /path/to/dir[/file] ]
+    wallsmart [ -t|--temporary /path/to/file ]
+    wallsmart [ -s|--search string ]
+    wallsmart [ -d|--delete string ]
+    wallsmart [ -c|--clean ]
+    wallsmart [ -h|--help ]
+
+DESCRIPTION
+    Wallsmart maintains a database of possible wallpaper images. When run with
+    no options it picks an image from the database at random, and smartly sets
+    it as wallpaper (adjusting wallpaper settings according to image size and
+    colour, and desktop size
+
+    The database is a tree of symlinks under ($walldbdir). 
+
+    If [string] is set, then the choice is made from only images that match the
+    [string] by name.
+    Note: [string] will also match directory names under $walldbdir. 
+
+    A history of recent wallpapers is kept so as to not repeat too quickly.
+
+OPTIONS
+    --add /path/to/directory/[or/imagefile.jpg] [/another/path/[is/permitted.jpg]]
+    -a /path/to/directory/[or/imagefile.jpg] [/another/path/[is/permitted.jpg]]
+	Add all images found recursively in the specified path(s) to the database.
+	For each directory specified, a 'scandirs' flag entry will be added
+	    to speed up future scans of that directory.
+	If \$2 is an image, it will be also be set as wallpaper 
+	All paths are canonicalised before linking
+
+    -1, -2, -3 ...
+	If a number is given as a parameter, then the history of recent
+	wallpapers is searched, and that is set again
+	Most expected use: \"Show me that previous wallpaper again?\"
+	$ wallsmart -1
+
+    --temporary /path/to/image.file
+    -t /path/to/image.file
+	Set the image as wallpaper, but do not add it to the database. 
+
+    --search string
+    --stats string
+    -s string
+	List all images in the database that match string,
+	plus stats of found images. 
+	If no string is listed, then statistics of all available images,
+	recent history, and total history
+
+    --delete string
+    -d string
+	Delete all matching links from the database without prompting
+	If no string is set, the currently set image will be deleted WITH prompt
+  
+    --info
+    -i
+a	Provide information about currently set wallpaper.
+
+    --clean
+    -c
+	Clean all dangling symlinks. Note that wallsmart will clean dangling
+	symlinks when they're found in normal use anyway
+
+    --help
+    -h
+	This help... :)
+
+EXAMPLES
+    $ wallsmart -s vehicles	    # list all images that match 'vehicles' in their path
+    $ wallsmart /1920x1080/	    # set an image from the 1920x1080 resolution directory
+    $ wallsmart \"\$(find -L $walldbdir -type f -printf "%s\t%p\n" | sort -gr | head -1 | cut -f 2-)\"	    # set largest image (by filesize) as wallpaper
+    $ wallsmart -d \"\$(find -L $walldbdir -type f -printf "%s\t%p\n" | sort -gr | tail -1 | cut -f 2-)\"	    # delete smallest image from db
+SEE ALSO
+    http://www.commandlinefu.com/commands/view/3812/set-gnome-wallpaper-to-a-random-jpg-from-the-specified-directory
+
+HISTORY
+    2.5   - 20190626 - import to git / github
+    2.4.4 - 20190602 - dbus_session hardcoded as a hotfix. sorry everyone
+    2.4.3 - 20160410 - fixed up $walldbdir/current symlink
+			(had existed, but not since 20140709??!)
+    2.4.2 - 20160212 - statistics bug after 4.1 now fixed
+    2.4.1 - 20150923 - 'scandirs' excluded from statistics
+    2.4   - 20150623 - added initial $walldbdir/scandirs/ functionality. 
+    2.3.1 - 20150128 - Update to use dconf instead of mateconftool-2 for mate
+    2.3   - 20140122 - info of current wallpaper (quick and dirty hack)
+    2.2   - 20130104 - pixelcount, aspect and resolution now in library path
+		     - Checks pre-existance when adding to library
+    2.1.1 - 20121220 - Any level under $walldbdir should now be possible
+    2.1   - 20121214 - Updated to a tree under $walldbdir. One level subdirectory reveals image resolution.
+    2.0   - 20120826 - Begin clean rewrite as 'wallsmart'
+    1.x   - 2012 May - Updated GWIS to MATE compatibility
+    1.x   - 2011 May - Original 'GWIS' script (Gnome Wallpaper Intelligently Set)
+			...it quickly became spaghetti code.
+
+AUTHOR / COPYRIGHT
+    © Nemo Thorx 2012
+    nemo@thorx.net
+    http://wiki.thorx.net/  TODO - move GWIS to wallsmart 
+
+FILES (defaults)
+    \$HOME/.wallsmartrc
+	configuration file
+    \$HOME/.wallsmart.d/
+    wallpaper library (a tree full of symlinks (subdirectories by image res)
+    \$HOME/.wallsmart.d/history
+	history of recently set wallpapers
+    \$HOME/.dbus/session-bus/\`cat /var/lib/dbus/machine-id\`-0
+	dbus session information
+
+CONFIGURATION
+	A typical .wallsmartrc:
+		walldbdir=\"\$HOME/.wallsmart.d\"
+		picopt_default=\"scaled\"   # default picture_option setting. 
+		DEBUG=\"\"      # any non-zerolength string will activate debug
+
+ENVIRONMENT
+    TODO
+
+DEPENDENCIES
+    TODO - compile this list
+
+BUGS/CAVEATS/FEATURES/PLANS
+    * -a currently fails to add a single image
+
+    * Wallpaper setting tastes are highly personal. I'm not sure that it's
+      possible to cover all tastes for all images whilst keeping configuration
+      options to a reasonable size. To this end, this script is ultimately
+      tuned to its authors personal taste, and large wallpaper archive
+      (mainly 'Picture of the Day' images (eg from wikipedia, hubble, etc)
+
+    * Would be nice to cache the calculated edge colour settings for performance
+      (can't cache layout choice, since monitors may change. Would have to test
+      that the image isn't newer than the cache, and handle deletions sanely
+
+    Originally designed for the MATE desktop, with support planned (in order)
+    for Gnome2, Gnome3, Unity, KDE4 and Trinity
+
+TL;DR
+    Setup
+	$ mkdir $walldbdir
+	$ $0 -a /path/to/directory/of/images
+    Usage
+	$ $0
+"
+
+
+
+
+################################################################### FUNCTIONS
+
+do_log() {
+    [ -n "$VERBOSE" ] && echo -n ": " && tput bold && echo "$@" && tput sgr0
+    logger -t wallsmart -p info "$@"
+}
+
+do_history() {
+    case $1 in 
+	add)
+	    shift
+	    logtime=$(date +%Y%m%d%H%M%S)
+	    [ -z "$historynologflag" ] && echo "$logtime;$1" >> $walldbdir/history
+	    ln -f -s "$1" $walldbdir/current
+	    ;;
+	get)
+	    # TODO: get history by time as well as count. eg, -1d or -1h  :)
+	    shift
+	    beforenow=$(($1-1))
+	    tail -n "$beforenow" $walldbdir/history | head -1 | cut -d";" -f 2-
+	    ;;
+    esac
+}
+
+bail() {
+    [ -n "$VERBOSE" ] && echo "! $@"
+    logger -t wallsmart -p err "$@"
+    exit 1
+}
+
+do_findfiles() {
+    neweropts=""
+    [ -n "$2" ] && bail "Found a \$2 ($2) in do_findfiles. That shouldn't be possible"
+    # TODO: if we're adding a directory, check for a {directory}.last file in $walldbdir, and if it exists, then only find files newer than that. 
+    if [ -d "$1" ] ; then
+	realdirpath="$(readlink -f "$1")"
+	encodeddir=$(echo "$realdirpath" | sed -e 's/\//→/g')
+	scandirepath=${walldbdir}/scandirs/${encodeddir}
+	if [ -w "$scandirepath" ] ; then
+	    echo "Only scanning files newer than:" >&2
+	    ls -l "${scandirepath}" >&2
+	    neweropts="-newer ${scandirepath}"
+	    # frustratingly, I can't work out how to get $neweropts working as a variable in the single find command. It breaks if the scandirepath has spaces, and I can't work out the escapes. damnit. This should be in perl? :)
+	    find "$1" -type f \( -iname \*jpg -o -iname \*jpeg -o -iname \*png -o -iname \*gif \) -not -wholename \*/thumbs/\* -not -wholename \*/gallery_thumbs/\* -newer "${scandirepath}" -print0
+	else
+	    find "$1" -type f \( -iname \*jpg -o -iname \*jpeg -o -iname \*png -o -iname \*gif \) -not -wholename \*/thumbs/\* -not -wholename \*/gallery_thumbs/\* -print0
+	fi
+    fi
+    [ -n "$encodeddir" ] && touch "$scandirepath"
+}
+
+do_findindb() {
+    find $walldbdir/ -type l \( -iname \*jpg -o -iname \*jpeg -o -iname \*png -o -iname \*gif \) -not -name \*→thumbs→\* -not -name \*→gallery_thumbs→\* -print0 | grep -a -z "$@"
+}
+
+do_deadlinksdb() {
+    find $walldbdir -type l ! -exec test -r {} \; -print0
+}
+
+do_getimginfo() {
+    # some variable gymnastics to get the image dimensions. 
+	#imggeom=$(identify -verbose "$imgpath" | grep "Page geometry" | head -1)	# "  Page geometry: 1024x768+0+0"
+        #imggeom=${imggeom##*: }	# "1024x768+0+0"
+	#imggeom=${imggeom%%+*}	# "1024x768"
+
+    imggeom=$(identify -format %G\\n "$imgpath" | head -1)	# "30000x23756"
+				    # "\\n" to handle animated gifs
+    imgwidth=${imggeom%x*}	# "1024"
+    imgheight=${imggeom#*x}	# "768"
+    [ -z "$imgwidth" ] && imgwidth=1	# fallback value
+    [ -z "$imgheight" ] && imgwidth=1	# fallback value
+}
+
+do_addtodb() {
+    while read -r -d '' filepath ; do
+	realpath="$(readlink -f "$filepath")"
+	targetfile=$(echo $realpath | sed -e 's/\//→/g')
+	    # check if we have this already
+	found=$(find $walldbdir -type l -iname "$targetfile")
+	if [ -n "$found" ] && [ -n "$VERBOSE" ] ; then
+	    echo "= $targetfile"
+	else
+	    imgpath=$realpath
+	    do_getimginfo	    # gets resolution info for next steps. requires $imgpath set :)
+		# some more info to encode in the path
+		    # mpixels needs to be collapsed to most sig digit only
+	    mpixels=$(($imgwidth*$imgheight))
+	    mpixels_msd=${mpixels:0:1}	# first number only
+	    # mpixels_mag=$(echo -n ${mpixels} | wc -c)    # magnitude
+	    mpixels_mag=${#mpixels}    # magnitude
+	    case $mpixels_mag in	# pixelcount is self evident?
+		1|2|3)
+		    pixelcount="1-999"
+		    ;;
+		4|5)
+		    pixelcount="1k+"
+		    ;;
+		6)
+		    # 640x480 = 307200 = 300k+
+		    # 1024x768 = 786432 = 700k+
+		    pixelcount="${mpixels_msd}00k+"
+		    ;;
+		7)
+		    # 1920x1080 = 2073600 = 2M+
+		    pixelcount="${mpixels_msd}M+"
+		    ;;
+		8)
+		    pixelcount="${mpixels_msd}0M+"
+		    ;;
+		9)
+		    pixelcount="${mpixels_msd}00M+"
+		    ;;
+		*)
+		    pixelcount="${mpixels_msd}G+"
+		    ;;
+	    esac
+		# aspect uses awk for leading 0 goodness
+	    aspect=$(echo "$imgwidth $imgheight" | awk '{printf "%.1f", $1 / $2}')
+	    targetdir="$walldbdir/${pixelcount}/${aspect}/${imgwidth}x${imgheight}"
+	    mkdir -p "$targetdir"
+	    ln -f -s "$realpath" "$targetdir/$targetfile" >/dev/null && echo "+ ${pixelcount}/${aspect}/${imgwidth}x${imgheight}/$targetfile" || echo "! FAIL for $realpath"
+	fi
+    done   
+}
+
+do_delfromdb() {
+    while read -r -d '' filepath ; do
+	rm -v "$filepath" && count=$(($count+1))
+    done   
+    do_log "Deleted $count files from the database"
+}
+    
+do_dbstats() {
+    dbcount=$(find $walldbdir -type l | wc -l)
+    case $1 in
+	search)
+	    shift
+	    while read -r -d '' filepath ; do
+		ls -LsSh "$filepath" | sed -e 's/ /	/'
+		count=$(($count+1))
+	    done
+	    echo ""
+	    echo "Found $count matching files from database of $dbcount entries ($(echo "scale=2;$count*100/$dbcount" | bc)%)"
+	    ;;
+	stats)
+	    echo "Total of $(find $walldbdir/ -type l | wc -l) files in the database referencing $(du -shL $walldbdir 2>/dev/null | cut -f 1) of images"
+	    echo ""
+	    echo "10 biggest files (searching $walldbdir)"
+	    find -L $walldbdir/ -path *$walldbdir/[0-9]* -type f -printf "%s\t%p\n" | sort -gr | head | cut -f 2- | tr "\n" "\0" | xargs -0 ls -LsSh
+	    echo ""
+	    echo "10 smallest files"
+	    find -L $walldbdir/ -path \*$walldbdir/\[0-9\]\* -type f -printf "%s\t%p\n" | sort -gr | tail | cut -f 2- | tr "\n" "\0" | xargs -0 ls -LsSh
+	    echo ""
+	    echo "$(do_deadlinksdb | tr \"\\0\" \"\\n\" | wc -l) broken link(s). (cleanable with --clean)" 
+	    echo ""
+	    echo "File extentions"
+	    find $walldbdir -mindepth 2 -type l | sed -e 's/.*\.\(.*\)/\1/g' | grep . | sort | uniq -c | sort -g
+#	    while read -r -d '' filepath ; do
+#		type=${filepath##*.}
+#		typelist=$(echo -e "${type}\n${typelist}")
+#	    done
+#	    echo "$typelist" | sort | uniq -c | sort -g
+
+	    ;;
+    esac
+}
+
+do_pictureoptionsmagic() {
+    # almost all future sets will need backing gradient, no? (perfect aspect aside)
+    # this vertstripe means I capture an 8pixel stripe along the edge after scaling to display, not before. (see $vertstripe later)
+    vertstripe_scaled=$(convert "$imgpath" -resize 1x$(( ($imgheight*$displayheight)/($imgheight*8) ))\! -depth $depth txt:-)
+    pricol=$(echo "$vertstripe_scaled" | egrep -m1 -o "#[0-9A-F]{6}")
+    seccol=$(echo "$vertstripe_scaled" | egrep -o "#[0-9A-F]{6}" | tail -1)
+    [ -n "$DEBUG" ] && echo "# Vertical gradient edge colors: pri: $pricol sec: $seccol"
+
+    shadetype="vertical-gradient"
+
+    # first up, let's see if the file path specifies it all for us
+    while read -d '%' element ; do 
+        case $element in 
+            wallpaper|zoom|centered|scaled|stretched|spanned) 
+                echo "# As specified in the file path: $element" 
+                path_options="$element" 
+                ;; 
+        esac    
+    done < <(echo "$imgpath" | sed -e "s/→/%/g")
+    [ -n "$path_options" ] && picture_options=$path_options && return
+
+
+    # the 6 width/height variables (just found before calling here),
+    # discovering $multihead (below), and $picopt_default
+    # are enough to determine $picture_options 
+    # ie, span, scaled, zoom, centered, etc. 
+
+    # Exact aspect on the head (and more than half size) - scaled
+    # TODO: find oversize images with exact ratio to test
+    if [ $(echo "scale=4;($imgwidth*$headheight)/($imgheight*$headwidth)" | bc) == "1.0000" ] && [ $imgwidth -gt $headwidth ] ; then
+	[ -n "$DEBUG" ] && echo "# Exact aspect match: scaled"
+	picture_options=scaled && return
+    fi
+
+    # detect multihead and set appropriately
+    if [ $(($displaywidth*$displayheight)) -gt $(($headwidth*$headheight)) ] ; then
+	# simple guess of monitor layout
+	multihead=complex
+	[ $displaywidth -eq $headwidth ] && multihead=vertical
+	[ $displayheight -eq $headheight ] && multihead=horizontal
+	[ -n "$DEBUG" ] && echo "# Multihead found: type $multihead"
+
+	# when set to 'spanned' for multihead, it acts as 'scaled', just across
+	# the entire virtual display, rather than per-head. So testing for
+	# spanned appropriateness is relatively simple...?
+	if [ "$multihead" == "horizontal" ] ; then
+	    # image is at least 90% of total width (when scaled)
+	    # and scales to not more than 75% of head height, then span
+# TODO: check all this math for edge cases. (I think: needs to check 90% when not-scaled too, else small-but-correct-ratio images will match?
+	    [ $(($displayheight*$imgwidth/$imgheight)) -gt $(($displaywidth*90/100)) ] && [ $(($imgheight/$imgwidth*$displaywidth)) -lt $(($headheight*75/100)) ] && picture_options=spanned && echo "# Image suits: spanned" && return
+	fi
+# TODO: multihead=vertical, and multihead = complex. 
+# TODO TODO! ... work out if all multihead can be merged into one check? 
+	[ -n "$DEBUG" ] && echo "# ...Image failed to suit spanned tests. Moving on..."
+    fi
+
+# actually, I'm going with "only wallpaper if explicitely set in the path". 
+#    # tile if it's smaller than a quarter on both
+#    if [ $(($imgwidth*4)) -lt $headwidth ] && [ $(($imgheight*4)) -lt $headheight ] ; then
+#	[ -n "$DEBUG" ] && echo "# Image is tiny: wallpaper."
+#	picture_options=wallpaper && return
+#    fi
+
+    # centered if it's smaller than a third on both
+    # (rationale: photo style images can be scaled a little over than 2x
+    # and remain tolerable (esp behind transparent terms, etc). 
+    # Those picky about pixel perfect are unlikely to have small images anyway :)
+    if [ $imgwidth -lt $(($headwidth*10/24)) ] && [ $imgheight -lt $(($headheight*10/24)) ] ; then
+	[ -n "$DEBUG" ] && echo "# Image is small: Centered."
+	picture_options=centered && return
+    fi
+
+    if [ $imgwidth -gt $headwidth ] || [ $imgheight -gt $headheight ] ; then
+        [ -n "$DEBUG" ] && echo "# Image is bigger in at least one dimension: scaled."
+        picture_options=scaled && return
+    fi
+
+# TODO: work out other picture_option styles... :)
+# idea: wallpaper if it's square, smaller than target display, does not have a border, but DOES have matching (within tolerance) opposide edges...
+
+# These additional 'convert' runs only needed for small images, so I dont feel bad about the additional overhead. 
+    # this is needed for the border identification stuff...
+    vertstripe=$(convert "$imgpath" -resize 1x$(($imgheight/8))\! -depth $depth txt:-)
+    horistripe=$(convert "$imgpath" -resize $(($imgwidth/8))x1\! -depth $depth txt:-)
+    topcol=$(echo "$vertstripe" | egrep -m1 -o "#[0-9A-F]{6}")
+    bottomcol=$(echo "$vertstripe" | egrep -o "#[0-9A-F]{6}" | tail -1)
+    leftcol=$(echo "$horistripe" | egrep -m1 -o "#[0-9A-F]{6}")
+    rightcol=$(echo "$horistripe" | egrep -o "#[0-9A-F]{6}" | tail -1)
+    [ -n "$DEBUG" ] && echo "# Bordertest edge colors: T: $topcol B: $bottomcol L: $leftcol R: $rightcol"
+
+    # centered if it's smaller than target display, and has border
+    if [ "$topcol" == "$bottomcol" ] && [ "$leftcol" == "$rightcol" ] ; then
+	[ -n "$DEBUG" ] && echo "# Image has border: Centered."
+	picture_options=centered && return
+    fi
+
+    # Default to $picopt_default
+    [ -n "$DEBUG" ] && echo "# No other test caught: defaults = $picopt_default."
+    picture_options=$picopt_default
+}
+
+
+do_setwall() {
+    [ -z "$1" ] && bail "No images in database match request: $OPTS"
+    imgpath="$*"
+    [ -n "$DEBUG" ] && echo "# Found $imgpath"
+
+    # Check that image target exists, otherwise reap it from the DB...
+    readlink -e "$*"
+    if [ $? -eq 1 ] ; then
+	[ -n "$DEBUG" ] && echo "# However, target not found. Cleaning up"
+	echo -en "$*\0" | do_delfromdb
+	bail "Image target $* not found. Exiting"
+    fi
+
+    # setup the DBUS environment we need. 
+    # this worked in ubuntu 16.04 world
+#    dbus_session="$HOME/.dbus/session-bus/`cat /var/lib/dbus/machine-id`-0"
+### these ### comments precede the new ubuntu18.04 world. systemd? changes in mate?
+###    dbus_session=$DBUS_SESSION_BUS_ADDRESS
+
+    if [ -r $dbus_session ] ; then
+###	. $dbus_session
+###	export DBUS_SESSION_BUS_ADDRESS
+### TODO: be smarter about this path. it's hardcoded to UID 1002 at moment...
+	export DBUS_SESSION_BUS_ADDRESS="unix:path=/run/user/1002/bus"
+    else
+	bail "No dbus session bus found"
+    fi
+    
+    # get information about our X display
+    # first, the whole thing:
+    displayres=$(xdpyinfo | grep dimensions | awk '{print $2}')  || bail "No available X11 found"
+    displaywidth=${displayres%x*}
+    displayheight=${displayres#*x}
+
+    # get the resolution of the largest monitor
+    pixeltmpold=0
+    for head in $(xdpyinfo -ext all 2>/dev/null | grep "head" | awk '{print $3}'  ) ; do
+	pixeltmp=$(echo $head | tr x \* | bc)
+	[ $pixeltmp -gt $pixeltmpold ] && maxheadres=$head
+	pixeltmpold=$pixeltmp
+    done
+    headwidth=${maxheadres%x*}
+    headheight=${maxheadres#*x}
+
+    do_getimginfo   # obtains $imgwidth and $imgheight
+
+    # from these 6 variables, (display/head/img)x(width/height) we should now be able to determine the best way to set the image as wallpaper (span, centered, scaled, etc)
+    [ -n "$DEBUG" ] && echo "# X: $displaywidth $displayheight H: $headwidth $headheight I: $imgwidth $imgheight"
+    do_pictureoptionsmagic
+
+    # TODO: some magic to decide a few things...
+    # * find DBUS stuff
+    # * mateconftool-2 / gconftool-2 / dconf ?
+#    mateconftool-2 -t str -s /desktop/mate/background/color_shading_type "$shadetype" -s /desktop/mate/background/primary_color "$pricol" -s /desktop/mate/background/secondary_color "$seccol" -s /desktop/mate/background/picture_options "$picture_options" -s /desktop/mate/background/picture_filename "$*"
+    dconf write /org/mate/desktop/background/color-shading-type "'$shadetype'"
+    dconf write /org/mate/desktop/background/primary-color "'$pricol'"
+    dconf write /org/mate/desktop/background/secondary-color "'$seccol'"
+    dconf write /org/mate/desktop/background/picture-options "'$picture_options'"
+    dconf write /org/mate/desktop/background/picture-filename "'$*'"
+#    dconf write /org/mate/desktop/background/draw-background true
+    do_log "'$*' (${imgwidth}x${imgheight}): $picture_options with $shadetype from $pricol to $seccol"
+    do_history add "$*"
+}
+
+
+
+######################################################################## MAIN
+#
+#
+[ -n "$DEBUG" ] && echo "# $(date)"
+
+# first, check for $HOME/.wallsmart.d
+[ ! -d $walldbdir ] && bail "No $walldbdir directory. Please create it, and populate it with $0 --add"
+# TODO: offer to create?
+[ ! -r $walldbdir ] && bail "$walldbdir found, but not readable. Aborting"
+
+# now we parse some options
+case $1 in 
+    -h|--help)
+	echo "$helptext"
+	;;
+    
+	# TODO: --rescan(?) option which will process all directories found to have been previously scanned via $walldbdir/scandirs
+	# OR: separate dirs to scan from the last-scanned cache? 
+    -a|--add)
+	[ ! -w $walldbdir ] && bail "$walldbdir found, but not writeable. Aborting"
+	shift
+	if [ -n "$1" ] ; then
+	    while [ -n "$1" ] ; do
+		do_findfiles "$1" | do_addtodb
+		shift
+	    done
+	else
+	    bail "Please provide a path with --add option."
+	fi
+	historynologflag="true"
+	# test against $1 means we set the first image as wallpaper if multiple images were added
+	if $(file -b --mime-type "$1" | grep -q image) ; then
+		# TODO: I should setwall against the file added to the db!
+	    do_setwall "$1"
+	fi
+	;;
+    
+    -d|--delete)
+	shift
+	if [ -n "$2" ] ; then
+	    bail "Sorry, only one --delete parameter allowed at a time"
+	elif [ -n "$1" ] ; then
+	    do_findindb "$@" | do_delfromdb
+	else
+	    # currentwall=$(mateconftool-2 -g /desktop/mate/background/picture_filename | tr -d "\n")
+	    currentwall=$(dconf read /org/mate/desktop/background/picture-filename | tr -d "\n'")
+	    realwall=$(realpath "${currentwall}")
+	    echo -n "Delete $currentwall ?
+	    (y/Y/yes to delete from $walldbdir. X to eXpunge target also) "
+	    read response
+	    case $response in
+		y|Y|yes)
+		    rm -v "$currentwall"
+		    ;;
+		X)
+		    rm -v "$realwall" && rm -v "$currentwall"
+		    ;;
+	    esac
+	    # TODO: make this discovery of method less MATE specific
+	    # TODO: provide option to delete the REAL file as well as the library pointer?
+	fi
+	;;
+    
+    -s|--search|--stats)
+	shift
+	if [ -n "$2" ] ; then
+	    bail "Sorry, only one --search parameter allowed at a time"
+	elif [ -n "$1" ] ; then
+	    do_findindb "$@" | do_dbstats search
+	else
+	    do_findindb . | do_dbstats stats
+	fi
+	# TODO: more stats ideas
+	# ...analyse leading paths  - maybe with something like:
+	#   ... ls -f | awk -F→ '{print $2"→"$3"→"$4}' | sort | uniq -c | sort -g
+	;;
+    
+    -c|--clean)
+	do_deadlinksdb | do_delfromdb 
+	;;
+
+    -t|--temp*|--test)
+	shift
+	if [ -r "$1" ] ; then
+	    do_setwall "$1"
+	    echo "Note: wallpaper set, but not added to library. Use -a for that"
+	else
+	    bail "--test requires a path to image file as second parameter"
+	fi
+	;;
+    
+    -[0-9]*)
+	historynologflag="true"
+	echo "# Searching history for wallpaper $1 ago"
+	do_setwall $(do_history get $@)
+	;;
+    -i|--info)
+	# this is a bit nasty. I should really be querying the system (mateconftool-2/dconf/etc) to find out CURRENT system state. 
+	# this hack, instead, just re-sets the current set image, thus spitting out the current results, but also poisoning history, and losing any custom settings
+	# TODO: fix this
+	currentwall=$(do_history get 0)
+	echo "# Last image found was $currentwall. Setting it again to provide info. (this is a hack that needs fixing)"
+	echo ""
+	do_setwall $currentwall
+	;;
+    -*)
+	bail "Unknown option(s): $*"
+	;;
+    *)
+	OPTS=$@
+	if [ -n "$1" ] ; then
+	    do_setwall $(do_findindb "$@" | tr "\0" "\n" | shuf -n 1 )
+	    # when there is a filter, we dont search history. keep the shuf. 
+	else
+            do_setwall $(do_findindb . | tr "\0" "\n" | shuf -n 1)
+	    # TODO: replace shuf with function to check history here
+	fi
+	;;
+esac
+
+# we should only reach here if everything went as expected. 
+
+# screenshot our work (work hack to get periodic screenshots, 2017 May 11)
+# shutter -e -n -f -o /home/owenc/tmp/screenshots/work/$(date +%FT%T).png
+
+
+exit 0
+
+
+
+
+
+# note that my symlinks are named with full-path, but use → as seperator
+# excerpt from my /usr/share/X11/locale/en_US.UTF-8/Compose
+# <Multi_key> <minus> <greater>   : "→" U2192 # RIGHTWARDS ARROW
+
+# in MATE at least, following types are known to 
+# * work: gif, jpg, jpeg, png, svg, bmp, tiff, ico, ppm, pnm, jp2
+# * fail: xcf, tga, cr2
+FILELISTTMP=$(find $walldbdir -type l \( -iname \*jpg -o -iname \*jpeg -o -iname \*png -o -iname \*gif \) -not -iname \*→thumbs→\* -not -iname \*→gallery_thumbs→\* )
+# alternative find with regex? Can this be case insensitive?
+# find $HOME/.wallsmart.d -type l -regextype posix-awk -regex "(.*.gif|.*.jpg|.*.jpeg)"
+# note: the excluded thumbs and gallery_thumbs should have been skipped on any
+# -a addition anyway, but no harm in checking both times
+
+
+
+
+
+
+# MORE TODO:
+# inspect out gwis2 - a previous restart of the GWIS rewrite! :)
+
+
+# gnome3 isms
+# <@Screwtape> $ dconf read /org/gnome/desktop/background/color-shading-type
+# <@Screwtape> 'solid'
+#
