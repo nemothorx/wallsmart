@@ -80,8 +80,9 @@ OPTIONS
     --delete string
     -d string
 	Delete all matching links from the database without prompting
-	If no string is set, the currently set image will be deleted WITH prompt
-  
+	If no string is set, the currently image will be deleted
+        and user prompted to quarantine/delete the original file on disk
+
     --info
     -i
 a	Provide information about currently set wallpaper.
@@ -560,6 +561,11 @@ case $1 in
 	    realwall=$(realpath "${currentwall}")
 	    echo -n "Delete $currentwall ?
 	    (y/Y/yes to delete from $walldbdir. X to eXpunge target also) "
+            # TODO: improve response options
+                # d/y - delete from db only
+                # x - delete from db and also delete from disk
+                # q - delete from db and also quarantine disk file
+                # n - do nothing
 	    read response
 	    case $response in
 		y|Y|yes)
