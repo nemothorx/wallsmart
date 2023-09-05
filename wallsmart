@@ -618,8 +618,12 @@ case $1 in
 	# this hack, instead, just re-sets the current set image, thus spitting out the current results, but also poisoning history, and losing any custom settings
 	# TODO: fix this
 	currentwall=$(do_history get 0)
-	echo "# Last image found was $currentwall. Setting it again to provide info. (this is a hack that needs fixing)"
-	echo ""
+	echo "# Last image found was $currentwall:"
+        echo ""
+        file $(readlink -f $currentwall)
+        echo ""
+        echo "Setting it again to provide wallsmart specific colour info. (this is a hack that needs fixing)"
+        echo ""
 	do_setwall $currentwall
 	;;
     -*)
