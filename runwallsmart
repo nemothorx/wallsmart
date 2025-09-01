@@ -1,0 +1,8 @@
+#!/bin/bash
+
+# TODO: this should test if I'm logged in, and if not, exit
+while true ; do
+    #/home/nemo/bin/gwis 
+    /home/nemo/bin/wallsmart
+    sleep $((180-$(date +%s)%180))  # sleep till the next 3min rotation starts
+done
